@@ -2,13 +2,6 @@
 title: "NYC Shooting Incident Analysis"
 date: "5/8/2021"
 output:
-  pdf_document: 
-    toc: true
-    toc_depth: 1
-    highlight: pygments
-    number_sections: true
-    df_print: kable
-  urlcolor: blue
   html_document: default
 ---
 
