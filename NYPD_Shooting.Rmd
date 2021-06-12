@@ -1,0 +1,337 @@
+---
+title: "NYC Shooting Incident Analysis"
+date: "5/8/2021"
+output:
+  pdf_document: 
+    toc: true
+    toc_depth: 1
+    highlight: pygments
+    number_sections: true
+    df_print: kable
+  urlcolor: blue
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+## If a package is installed, it will be loaded. If any 
+## are not, the missing package(s) will be installed 
+## from CRAN and then loaded.
+## from: https://vbaliga.github.io/verify-that-r-packages-are-installed-and-loaded/
+
+## First specify the packages needed
+packages = c("ggmap", "ggplot2", "knitr", "lubridate", "readxl", "tidyverse")
+
+## Now load or install&load all
+package.check <- lapply(
+  packages,
+  FUN = function(x) {
+    if (!require(x, character.only = TRUE)) {
+      install.packages(x, dependencies = TRUE)
+      library(x, character.only = TRUE)
+    }
+  }
+)
+```
+
+## Historical NYPD Shooting Incident data
+
+The New York Police Department (NYPD) provides a dataset of shooting incidents in New York City from 2006 to the previous calendar year.
+This data only includes shooting incidents resulting in an injured victim. 
+Thus, it does not represent every shooting incident in New York City. 
+
+The data and data dictionary are available at <https://data.cityofnewyork.us/Public-Safety/NYPD-Shooting-Incident-Data-Historic-/833y-fsy8>.
+Footnotes accompanying the data are available at
+<https://data.cityofnewyork.us/api/views/833y-fsy8/files/e4e3d86c-348f-4a16-a17f-19480c089429?download=true&filename=NYPD_Shootings_Incident_Level_Data_Footnotes.pdf>.
+
+### Raw Shooting Data Structure 
+
+```{r get raw data, echo=FALSE}
+url_in <-"https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+nydata <- read.csv(url_in)
+# check out the data
+str(nydata)
+```
+
+### Raw Shooting Data Summary
+
+```{r summarize raw shooting data, echo=FALSE}
+summary(nydata)
+
+```
+### Recoded Shooting data with variables of interest.
+
+Age group, sex, and race contain inconsistent labels for both victim and perpetrator. These six variables are recoded so that all unknown values are missing. Records with missing values will be excluded from analyses unless noted otherwise.
+
+```{r examine and prepare data, echo=FALSE}
+# relabel the empty strings as missing on the factor variables
+#levels(nydata$PERP_AGE_GROUP)
+which.one <- which( levels(nydata$PERP_AGE_GROUP) == "" )
+#which.one
+levels(nydata$PERP_AGE_GROUP)[which.one] <- "UNKNOWN"
+#levels(nydata$PERP_AGE_GROUP)
+
+#levels(nydata$PERP_SEX)
+which.one <- which( levels(nydata$PERP_SEX) == "" )
+#which.one
+levels(nydata$PERP_SEX)[which.one] <- "U"
+#levels(nydata$PERP_SEX)
+
+#levels(nydata$PERP_RACE)
+which.one <- which( levels(nydata$PERP_RACE) == "" )
+#which.one
+levels(nydata$PERP_RACE)[which.one] <- "UNKNOWN"
+#levels(nydata$PERP_RACE)
+
+# keep variables of interest
+ny <- nydata %>%
+  select(INCIDENT_KEY, OCCUR_DATE, BORO, STATISTICAL_MURDER_FLAG, 
+         PERP_AGE_GROUP, VIC_AGE_GROUP, VIC_SEX, PERP_SEX, PERP_RACE, VIC_RACE, Latitude, Longitude) %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE)) %>%
+  mutate(YEAR = year(OCCUR_DATE)) %>%
+  mutate(PERP_AGE_GROUP = recode_factor(PERP_AGE_GROUP, "<18" = "<18", "18-24" = "18-24",
+                                  "25-44"="25-44", "45-64"="45-64", "65+" = "65+", "224" = NULL,
+                                  "940" = NULL, "1020" = NULL, "UNKNOWN" = NULL, .missing= NULL)) %>%
+  mutate(VIC_AGE_GROUP = recode_factor(VIC_AGE_GROUP, "<18" = "<18", "18-24" = "18-24",
+                                  "25-44"="25-44", "45-64"="45-64", "65+" = "65+", "UNKNOWN" = NULL, .missing= NULL)) %>%
+  mutate(PERP_SEX = recode_factor(PERP_SEX, "F" = "FEMALE", "M" = "MALE", "U" = NULL, .missing= NULL)) %>%
+  mutate(VIC_SEX = recode_factor(VIC_SEX, "F" = "FEMALE", "M" = "MALE", "U" = NULL, .missing= NULL)) %>%
+  mutate(PERP_RACE = recode_factor(PERP_RACE, "WHITE" = "WHITE", "WHITE HISPANIC" = "WHITE",
+                                   "BLACK" = "BLACK", "BLACK HISPANIC" = "BLACK", "ASIAN / PACIFIC ISLANDER"="AAPI/AIAN", 
+                                   "AMERICAN INDIAN/ALASKAN NATIVE" = "AAPI/AIAN", "UNKNOWN" = NULL, .missing= NULL)) %>%
+  mutate(VIC_RACE = recode_factor(VIC_RACE, "WHITE" = "WHITE", "WHITE HISPANIC" = "WHITE",
+                                   "BLACK" = "BLACK", "BLACK HISPANIC" = "BLACK", "ASIAN / PACIFIC ISLANDER"="AAPI/AIAN", 
+                                   "AMERICAN INDIAN/ALASKAN NATIVE" = "AAPI/AIAN", "UNKNOWN" = NULL, .missing= NULL))
+
+# summarize the prepared data
+summary(ny)
+
+```
+
+## Basic statistics of New York City Shooting Incidents
+
+Brooklyn has the highest total number of murdered shooting incident victims, but Staten Island has the highest percentage of shooting victims that resulted in murder. 
+```{r tabulate data NYC, echo=FALSE}
+
+table(ny$BORO, ny$STATISTICAL_MURDER_FLAG, useNA="ifany")
+# row percentages
+prop.table(table(ny$BORO, ny$STATISTICAL_MURDER_FLAG, useNA="ifany"), 1)
+```
+
+## Victim demographics
+
+The majority of shooting victims are black males aged 25-44. 
+
+```{r tabulate demographics victim NYC, echo=FALSE}
+table(ny$VIC_AGE_GROUP, ny$VIC_SEX, ny$VIC_RACE, useNA="ifany")
+
+#murder <- filter(ny, STATISTICAL_MURDER_FLAG=="true")
+#table(murder$VIC_AGE_GROUP, murder$VIC_SEX, murder$VIC_RACE, useNA="ifany") 
+```
+
+## Perpetrator demographics
+
+A large proportion of perpetrator demographics are missing in this data. Race is missing for over half of the incidents. One should use caution making any statements about the demographics of perpetrators based on the non-missing data. It should also be noted that this data is presented as one row per injured victim. There is no identifier key for the perpetrator, so it is not possible to make conclusions about the perpetrators (e.g., one shooting incident may involve multiple perpetrators).
+
+```{r tabulate demographics perpetrator NYC, echo=FALSE}
+table(ny$PERP_AGE_GROUP, ny$PERP_SEX, ny$PERP_RACE, useNA="ifany")
+```
+
+## Monthly shooting incidents in New York City
+
+Shooting incidents peak each year during summer months. 
+The years 2017-2019 have lower peaks than other years. 
+However, 2020 has a higher peak than all previous years in the data. 
+
+```{r visualize data NYC, echo=FALSE}
+NY_Totals <- ny %>%
+  group_by(YEAR_MONTH = floor_date(OCCUR_DATE, "month")) %>%
+  summarize(INCIDENTS = n()) %>%
+  ungroup()
+# NY_Totals
+
+NY_Totals %>%
+  ggplot(aes(x=YEAR_MONTH, y=INCIDENTS)) +
+  geom_line(aes(color="INCIDENTS")) +
+  geom_point(aes(color="INCIDENTS")) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle=90)) +
+  labs(title="Number of Shooting Incidents in NYC by Month", y=NULL) +
+  scale_x_date(date_breaks="year", date_labels="%Y", minor_breaks=NULL) 
+```
+
+
+## Shooting incidents in New York City by Borough
+
+More shooting incidents occur in Brooklyn and Bronx than the other boroughs. Staten Island has the fewest shooting incidents.
+
+```{r visualize data borough, echo=FALSE}
+Boro_Totals <- ny %>%
+  group_by(YEAR_MONTH = floor_date(OCCUR_DATE, "month"), BORO) %>%
+  summarize(INCIDENTS = n(), .groups='drop') %>%
+  ungroup()
+
+#Boro_Totals
+
+Boro_Totals %>%
+  ggplot(aes(x=YEAR_MONTH, y=INCIDENTS, group=BORO, color=BORO)) +
+  geom_line() +
+  geom_point() +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle=90)) +
+  labs(title="Number of Shooting Incidents by Borough", y=NULL) +
+  scale_x_date(date_breaks="year", date_labels="%Y", minor_breaks=NULL) 
+```
+
+```{r get map of nyc based on borders in data, echo=FALSE, message=FALSE, results=FALSE}
+# Create a map of New York City based on data latitude and longitude
+# Using Stamen Maps at http://maps.stamen.com/ to avoid Google Maps charges and security risk
+
+#summary(nydata$Latitude)
+#summary(nydata$Longitude)
+
+# create map borders based on the data
+height <- max(nydata$Latitude) - min(nydata$Latitude)
+width <- max(nydata$Longitude) - min(nydata$Longitude)
+borders <- c(bottom  = min(nydata$Latitude)  - 0.1 * height, 
+             top     = max(nydata$Latitude)  + 0.1 * height,
+             left    = min(nydata$Longitude) - 0.1 * width,
+             right   = max(nydata$Longitude) + 0.1 * width)
+
+# get map data within borders
+nyc_map <- get_stamenmap(borders, zoom = 11, maptype = "toner-lite")
+# ggmap(nyc_map)
+```
+
+## Map of shooting incidents in New York City, 2006-2020
+
+```{r map of nyc across years, echo=FALSE}
+ggmap(nyc_map) +
+  geom_point(data=ny, aes(x=Longitude, y=Latitude, color=YEAR),
+             size=0.1, alpha=0.4)  + 
+    ggtitle("Shooting Incidents in New York City from 2006 to 2020") +
+  theme(axis.ticks = element_blank(),
+          axis.text = element_blank(),
+          axis.title = element_blank()) 
+```
+
+## Map of shooting incidents in New York City, 2020
+
+```{r map of nyc 2020, echo=FALSE}
+year=2020
+
+ny_year <- ny %>%
+  filter(YEAR==year)
+
+# summary(ny_year)
+
+ggmap(nyc_map) +
+  geom_point(data=ny_year, aes(x=Longitude, y=Latitude, color=YEAR),
+             size=0.1, alpha=0.4)  + 
+    ggtitle("Shooting Incidents in New York City in 2020") +
+  theme(axis.ticks = element_blank(),
+          axis.text = element_blank(),
+          axis.title = element_blank(),
+        legend.position="none") 
+```
+
+## New York City Unemployment Data
+
+The COVID-19 pandemic of 2020 led to massive unemployment across the USA. This next section examines if there is an association between monthly unemployment rates and shooting incidents.
+
+Historical New York City monthly unemployment data are available at <https://statistics.labor.ny.gov/lausCSV.asp?PASS=1&geog=21093561>
+
+### Raw unemployment data structure
+```{r get raw unemployment data, echo=FALSE}
+url_in <-"https://statistics.labor.ny.gov/lausCSV.asp?PASS=1&geog=21093561"
+empdata <- read.csv(url_in, skip=6, nrows=46)
+
+# check out the data
+str(empdata)
+```
+
+### Transform and Append Unemployment Data to Shooting Data 
+
+```{r recode unemployment data, echo=FALSE}
+unemp <- empdata %>% 
+  select(Year, Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec) %>%
+  mutate(Year=as.numeric(as.character(Year))) %>%
+  pivot_longer(!Year, names_to = "Month",
+               values_to = "unemp_rate") %>%
+  mutate(MonNum=match(Month,month.abb)) %>%
+  mutate(YEAR_MONTH = make_date(year=Year, month=MonNum, day="01")) %>%
+  mutate(unemp_rate=as.numeric(sub("%", "", unemp_rate))) %>% 
+  select(YEAR_MONTH, unemp_rate)
+#str(unemp)
+#summary(unemp)
+#head(unemp)
+#tail(unemp)
+#str(NY_Totals)
+#summary(NY_Totals)
+
+Monthly_Shooting_Unemployment <-  inner_join(unemp, NY_Totals, by = c("YEAR_MONTH" = "YEAR_MONTH"))
+str(Monthly_Shooting_Unemployment)
+summary(Monthly_Shooting_Unemployment)
+
+```
+
+## Examine association between monthly unemployment rate and monthly shooting incidents.
+
+```{r modeling, echo=FALSE}
+
+#linear model
+mod <-lm(INCIDENTS ~ unemp_rate, data=Monthly_Shooting_Unemployment)
+summary(mod)
+
+# add the predicted value to the data
+#Monthly_Shooting_Unemployment %>% mutate (pred=predict(mod))
+Monthly_w_pred <- Monthly_Shooting_Unemployment %>% mutate(pred=predict(mod))
+
+# plot model
+Monthly_w_pred %>% ggplot() +
+  geom_point(aes(x=unemp_rate, y=INCIDENTS),
+             color="blue") +
+  geom_point(aes(x=unemp_rate, y=pred), color="red")
+
+#plot residuals
+resid <-resid(mod)
+plot(Monthly_Shooting_Unemployment$unemp_rate, resid,
+     ylab="Residuals", xlab="Unemployment Rate",
+     main="Shooting Incidents") +
+abline(0, 0)
+```
+
+## Conclusion
+
+New York City shooting incidents occur more often in Brooklyn and Bronx than other boroughs. 
+More shooting incidents occur in summer months. 
+The number of shooting incidents was lower between 2013-2019 compared to 2006-2012. 
+There was an increase in shooting incidents in 2020. 
+Shooting incidents are slightly associated with unemployment, but this does not explain most of the variation.  
+Other potential social and environmental factors associated with the COVID-19 pandemic should be considered, 
+such as the school closures, reduction in availability of social services, and the effects of social isolation.
+
+
+## Missing Data and Bias
+
+As mentioned at the start, this is not complete data on all shooting incidents in New York City. 
+It excludes shooting incidents without injured victims. 
+
+The data are laid out so that each row represents one injured victim. 
+There is an incident identifier (one incident may involve multiple injured victims).
+However, there is not an perpetrator identifier. 
+Thus it is not possible to examine individual perpetrators.
+
+There is also a high proportion of missing information on perpetrator age, sex, and race. 
+It is possible the missing data are biased, as the collection method may affect the coding
+(e.g., self-report versus assumptions made by investigators).
+However, information on how the demographic data were collected is not immediately available.
+
+My personal bias may be an inclination to distrust the veracity of shooting incident data provided by NYC. There is not much documentation on how the data are collected and verified. I tried to avoid this bias affecting my analysis by not making any statements that were not supported by the data.
+
+
+## R Session Info
+```{r session info, echo=TRUE}
+sessionInfo()
+```
